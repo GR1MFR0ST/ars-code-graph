@@ -9,12 +9,19 @@ Paste this into any ARS project's Claude Code session to install and configure a
 ```
 I need you to integrate ars-code-graph (our AST knowledge graph tool) into this project. Here's what to do:
 
-### 1. Install the tool
+### 1. Install our fork (NOT the upstream PyPI version)
 
-pip install code-review-graph
+IMPORTANT: If you previously installed code-review-graph from PyPI, uninstall it first:
+pip uninstall code-review-graph -y
 
-If pip isn't available, use:
-pipx install code-review-graph
+Then install our ARS fork in editable mode:
+pip install -e F:/ProfWorkspace/AIProjects/ars-code-graph
+
+This installs from our fork at https://github.com/GR1MFR0ST/ars-code-graph which includes:
+- Svelte SFC support (upstream doesn't have this)
+- Windows UTF-8 fixes
+- ARS wiki sync tooling
+Any future improvements we make to the fork are immediately available without reinstalling.
 
 Verify it works:
 code-review-graph --version
