@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
 Sync code-review-graph wiki output into the ARS wiki.
+"""
+# Fix Windows console encoding before any print() calls
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+"""
 
 Usage:
   python scripts/sync-wiki.py --project blueprintr --repo F:/ProfWorkspace/blueprintr
