@@ -94,6 +94,7 @@ EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".scala": "scala",
     ".sol": "solidity",
     ".vue": "vue",
+    ".svelte": "svelte",
     ".dart": "dart",
     ".r": "r",  # .lower() in detect_language handles .R → .r
     ".mjs": "javascript",
@@ -383,6 +384,10 @@ class CodeParser:
         if language == "vue":
             return self._parse_vue(path, source)
 
+        # Svelte SFCs: extract <script> blocks and delegate to JS/TS
+        if language == "svelte":
+            return self._parse_svelte(path, source)
+
         # Jupyter notebooks: extract code cells and parse as Python
         if language == "notebook":
             return self._parse_notebook(path, source)
@@ -534,6 +539,102 @@ class CodeParser:
                 node.line_start += line_offset
                 node.line_end += line_offset
                 node.language = "vue"
+            for edge in edges:
+                edge.line += line_offset
+
+            all_nodes.extend(nodes)
+            all_edges.extend(edges)
+
+        # Generate TESTED_BY edges
+        if test_file:
+            test_qnames = set()
+            for n in all_nodes:
+                if n.is_test:
+                    qn = self._qualify(n.name, n.file_path, n.parent_name)
+                    test_qnames.add(qn)
+            for edge in list(all_edges):
+                if edge.kind == "CALLS" and edge.source in test_qnames:
+                    all_edges.append(EdgeInfo(
+                        kind="TESTED_BY",
+                        source=edge.target,
+                        target=edge.source,
+                        file_path=edge.file_path,
+                        line=edge.line,
+                    ))
+
+        return all_nodes, all_edges
+
+    def _parse_svelte(
+        self, path: Path, source: bytes,
+    ) -> tuple[list[NodeInfo], list[EdgeInfo]]:
+        """Parse a Svelte SFC by extracting <script> blocks and delegating to JS/TS.
+
+        Svelte files contain <script>, <script context="module">, HTML template,
+        and <style> blocks. We extract script blocks via regex (no tree-sitter
+        Svelte grammar needed) and parse them with the JS/TS parser.
+        """
+        import re
+
+        text = source.decode("utf-8", errors="replace")
+        file_path_str = str(path)
+        test_file = _is_test_file(file_path_str)
+
+        all_nodes: list[NodeInfo] = [NodeInfo(
+            kind="File",
+            name=file_path_str,
+            file_path=file_path_str,
+            line_start=1,
+            line_end=source.count(b"\n") + 1,
+            language="svelte",
+            is_test=test_file,
+        )]
+        all_edges: list[EdgeInfo] = []
+
+        # Match <script ...>...</script> blocks (greedy per block, non-greedy
+        # across blocks via DOTALL).  Captures: (1) tag attributes, (2) content.
+        script_re = re.compile(
+            r"<script([^>]*)>(.*?)</script>",
+            re.DOTALL,
+        )
+
+        for match in script_re.finditer(text):
+            attrs = match.group(1)
+            content = match.group(2)
+            if not content.strip():
+                continue
+
+            # Detect lang="ts" attribute
+            script_lang = "javascript"
+            if re.search(r'lang\s*=\s*["\'](?:ts|typescript)["\']', attrs):
+                script_lang = "typescript"
+
+            # Calculate line offset: count newlines before the match start
+            line_offset = text[:match.start(2)].count("\n")
+
+            script_source = content.encode("utf-8")
+            script_parser = self._get_parser(script_lang)
+            if not script_parser:
+                continue
+
+            script_tree = script_parser.parse(script_source)
+
+            import_map, defined_names = self._collect_file_scope(
+                script_tree.root_node, script_lang, script_source,
+            )
+
+            nodes: list[NodeInfo] = []
+            edges: list[EdgeInfo] = []
+            self._extract_from_tree(
+                script_tree.root_node, script_source, script_lang,
+                file_path_str, nodes, edges,
+                import_map=import_map, defined_names=defined_names,
+            )
+
+            # Adjust line numbers to account for position within the .svelte file
+            for node in nodes:
+                node.line_start += line_offset
+                node.line_end += line_offset
+                node.language = "svelte"
             for edge in edges:
                 edge.line += line_offset
 
